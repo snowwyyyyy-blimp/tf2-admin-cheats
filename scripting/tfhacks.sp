@@ -6,11 +6,12 @@
 #include <sdkhooks>
 #include <tf2>
 #include <tf2_stocks>
+#include <tf2attributes>
 #undef REQUIRE_EXTENSIONS
 #include <vphysics>
 #define REQUIRE_EXTENSIONS
 
-#define PLUGIN_VERSION "1.3.0"
+#define PLUGIN_VERSION "1.4.0"
 #define ADMIN_FLAG ADMFLAG_CHEATS
 
 #define AIMBOT_FOV 30.0
@@ -20,10 +21,22 @@
 #define HOMING_RANGE 2500.0
 #define HSTATS_DMG_MULT 5.0
 #define HSTATS_PROJ_MULT 1.75
-#define SENTRY3_MODEL "models/buildables/sentry3.mdl"
-#define SENTRY3_HEALTH 216
-#define SENTRY3_SHELLS 200
-#define SENTRY3_ROCKETS 20
+#define SUPER_ATTR_COUNT 7
+static const char g_SuperAttrNames[SUPER_ATTR_COUNT][] = {
+    "engy building health bonus",
+    "engy sentry damage bonus",
+    "engy sentry fire rate increased",
+    "engy sentry radius increased",
+    "engy dispenser radius increased",
+    "engineer sentry build rate multiplier",
+    "engineer teleporter build rate multiplier"
+};
+static const float g_SuperAttrVals[SUPER_ATTR_COUNT] = {
+    1000.0, 1000.0, 0.001, 1000.0, 1000.0, 0.001, 0.001
+};
+static const char g_SuperObjClasses[][] = {
+    "obj_sentrygun", "obj_dispenser", "obj_teleporter"
+};
 
 public Plugin myinfo =
 {
@@ -52,7 +65,7 @@ enum
     FEAT_CLOAK,
     FEAT_UBER,
     FEAT_STATS,
-    FEAT_BUILD,
+    FEAT_SUPERBUILD,
     FEAT_INSTACHARGE,
     FEAT_AUTOSTRAFE,
     FEAT_MVMCASH,
@@ -66,7 +79,7 @@ static const char g_FeatureNames[FEAT_COUNT][16] =
     "aimbot", "infammo", "crits", "rapidfire", "killaura",
     "homing", "speed", "invis", "infhealth", "god",
     "noclip", "nofall", "oneshot", "cloak", "uber",
-    "stats", "build", "instacharge", "autostrafe",
+    "stats", "superbuild", "instacharge", "autostrafe",
     "mvmcash", "canteen", "cashmagnet"
 };
 
@@ -76,7 +89,7 @@ static const char g_FeatureTitles[FEAT_COUNT][32] =
     "Kill Aura", "Homing Projectiles", "Speed Hack",
     "Invisibility", "Infinite Health", "Godmode", "Noclip",
     "No Fall Damage", "One-Shot Kill", "Infinite Cloak", "Instant Uber",
-    "Hacked Stats", "Instant Lvl3 Buildings", "Instant Charge", "Auto Strafe",
+    "Hacked Stats", "Super Buildings", "Instant Charge", "Auto Strafe",
     "Infinite Money", "Infinite Canteen", "Cash Magnet"
 };
 
@@ -95,7 +108,7 @@ bool g_OneShot[MAXPLAYERS + 1];
 bool g_Cloak[MAXPLAYERS + 1];
 bool g_Uber[MAXPLAYERS + 1];
 bool g_HStats[MAXPLAYERS + 1];
-bool g_Build[MAXPLAYERS + 1];
+bool g_SuperBuild[MAXPLAYERS + 1];
 
 float g_SpeedMult[MAXPLAYERS + 1];
 
@@ -123,11 +136,6 @@ float g_DbgT[7];
 ArrayList g_ProjList;
 
 ConVar g_cvBaseSpeed;
-
-public void OnMapStart()
-{
-    PrecacheModel(SENTRY3_MODEL, true);
-}
 
 public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max)
 {
@@ -164,6 +172,7 @@ public void OnPluginStart()
     RegAdminCmd("sm_resetbomb", Cmd_ResetBomb, ADMIN_FLAG, "Return the MvM bomb to the hatch");
 
     HookEvent("player_spawn", Event_Spawn);
+    HookEvent("player_builtobject", Event_BuiltObject);
 
     g_ProjScaled = new StringMap();
 
@@ -203,7 +212,7 @@ void ResetPlayer(int client)
     g_CashMagnet[client] = false;
     g_LastYaw[client] = 0.0;
     g_HStats[client] = false;
-    g_Build[client] = false;
+    g_SuperBuild[client] = false;
     g_SpeedMult[client] = 1.0;
     g_AmmoRef[client] = INVALID_ENT_REFERENCE;
     g_MaxClip[client] = -1;
@@ -680,7 +689,7 @@ bool GetFeatureBool(int client, int feat)
         case FEAT_CLOAK: return g_Cloak[client];
         case FEAT_UBER: return g_Uber[client];
         case FEAT_STATS: return g_HStats[client];
-        case FEAT_BUILD: return g_Build[client];
+        case FEAT_SUPERBUILD: return g_SuperBuild[client];
         case FEAT_INSTACHARGE: return g_InstaCharge[client];
         case FEAT_AUTOSTRAFE: return g_AutoStrafe[client];
         case FEAT_MVMCASH: return g_MvmCash[client];
@@ -732,7 +741,22 @@ void SetFeatureByIndex(int client, int feat, bool value)
         case FEAT_CLOAK: g_Cloak[client] = value;
         case FEAT_UBER: g_Uber[client] = value;
         case FEAT_STATS: g_HStats[client] = value;
-        case FEAT_BUILD: g_Build[client] = value;
+        case FEAT_SUPERBUILD:
+        {
+            g_SuperBuild[client] = value;
+            if (IsClientInGame(client) && IsPlayerAlive(client))
+            {
+                if (value)
+                {
+                    SuperBuildScan(client, false);
+                    PrintToChat(client, "\x04[Cheats]\x01 Super Buildings active - new and existing buildings get x1000 stats.");
+                }
+                else
+                {
+                    SuperBuildScan(client, true);
+                }
+            }
+        }
         case FEAT_INSTACHARGE: g_InstaCharge[client] = value;
         case FEAT_AUTOSTRAFE: g_AutoStrafe[client] = value;
         case FEAT_MVMCASH: g_MvmCash[client] = value;
@@ -841,11 +865,6 @@ public Action Timer_Master(Handle timer)
         if (g_KillAura[c])
         {
             DoKillAura(c);
-        }
-
-        if (g_Build[c])
-        {
-            DoInstaBuild(c);
         }
 
         if (g_InstaCharge[c])
@@ -1441,56 +1460,54 @@ void BoostProjectileSpeed(int entity)
     }
 }
 
-void DoInstaBuild(int client)
+public Action Event_BuiltObject(Event event, const char[] name, bool dontBroadcast)
 {
-    int team = GetClientTeam(client);
-    InstaScan("obj_sentrygun", client, team, true);
-    InstaScan("obj_dispenser", client, team, false);
-    InstaScan("obj_teleporter", client, team, false);
+    int client = GetClientOfUserId(event.GetInt("userid"));
+    if (client <= 0 || !g_SuperBuild[client]) return Plugin_Continue;
+
+    int bld = event.GetInt("index");
+    if (!IsValidEntity(bld)) return Plugin_Continue;
+
+    CreateTimer(0.2, Timer_ApplySuperBld, EntIndexToEntRef(bld));
+    return Plugin_Continue;
 }
 
-void InstaScan(const char[] classname, int client, int team, bool isSentry)
+public Action Timer_ApplySuperBld(Handle timer, any ref)
 {
-    int ent = -1;
-    while ((ent = FindEntityByClassname(ent, classname)) != -1)
+    int ent = EntRefToEntIndex(ref);
+    if (ent != INVALID_ENT_REFERENCE && IsValidEntity(ent))
     {
-        if (!IsValidEntity(ent)) continue;
-        if (GetEntPropEnt(ent, Prop_Send, "m_hBuilder") != client) continue;
-        if (GetEntProp(ent, Prop_Send, "m_iTeamNum") != team) continue;
+        ApplySuperAttrs(ent, false);
+    }
+    return Plugin_Stop;
+}
 
-        if (GetEntProp(ent, Prop_Send, "m_bBuilding"))
-        {
-            SetEntProp(ent, Prop_Send, "m_bBuilding", false);
-        }
-        if (GetEntProp(ent, Prop_Send, "m_bPlacing"))
-        {
-            SetEntProp(ent, Prop_Send, "m_bPlacing", false);
-        }
+void SuperBuildScan(int client, bool reset)
+{
+    int team = GetClientTeam(client);
 
-        float built = GetEntPropFloat(ent, Prop_Send, "m_flPercentageConstructed");
-        int maxhp = GetEntProp(ent, Prop_Data, "m_iMaxHealth");
-        if (built < 1.0 || GetEntProp(ent, Prop_Send, "m_iHealth") < maxhp)
+    for (int i = 0; i < sizeof(g_SuperObjClasses); i++)
+    {
+        int ent = -1;
+        while ((ent = FindEntityByClassname(ent, g_SuperObjClasses[i])) != -1)
         {
-            SetEntPropFloat(ent, Prop_Send, "m_flPercentageConstructed", 1.0);
-            SetEntProp(ent, Prop_Send, "m_iHealth", maxhp);
-        }
+            if (!IsValidEntity(ent)) continue;
+            if (GetEntPropEnt(ent, Prop_Send, "m_hBuilder") != client) continue;
+            if (GetEntProp(ent, Prop_Send, "m_iTeamNum") != team) continue;
 
-        if (isSentry && GetEntProp(ent, Prop_Send, "m_iUpgradeLevel") < 3)
-        {
-            UpgradeSentry(ent);
+            ApplySuperAttrs(ent, reset);
         }
     }
 }
 
-void UpgradeSentry(int ent)
+void ApplySuperAttrs(int ent, bool reset)
 {
-    SetEntityModel(ent, SENTRY3_MODEL);
-    SetEntProp(ent, Prop_Send, "m_iUpgradeLevel", 3);
-    SetEntProp(ent, Prop_Send, "m_iHighestUpgradeLevel", 3);
-    SetEntProp(ent, Prop_Send, "m_iAmmoShells", SENTRY3_SHELLS);
-    SetEntProp(ent, Prop_Send, "m_iAmmoRockets", SENTRY3_ROCKETS);
-    SetEntProp(ent, Prop_Data, "m_iMaxHealth", SENTRY3_HEALTH);
-    SetEntProp(ent, Prop_Send, "m_iHealth", SENTRY3_HEALTH);
+    for (int i = 0; i < SUPER_ATTR_COUNT; i++)
+    {
+        TF2Attrib_SetByName(ent, g_SuperAttrNames[i], reset ? 1.0 : g_SuperAttrVals[i]);
+    }
+
+    TF2Attrib_ClearCache(ent);
 }
 
 void CopyVec(const float src[3], float dst[3])

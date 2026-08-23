@@ -25,7 +25,7 @@ console command, so you can give one player homing rockets without touching anyo
 | Infinite Cloak | Cloak meter pinned at 100 |
 | Instant Uber | Medigun charge pinned at full |
 | Hacked Stats | 5x outgoing damage, 1.75x projectile speed |
-| Instant Lvl3 Buildings | Engineer buildings spawn as maxed sentries (lvl3 model/stats) |
+| Super Buildings | All building attributes cranked x1000 (x0.001 for inverse stats): 1000x sentry damage/range/health, near-instant fire rate and build times, giant dispenser radius |
 | Instant Charge | Demo shield meter, sniper charge, medigun uber, and Huntsman draw all fill instantly |
 | Auto Strafe | Perfect air-strafing while airborne - just move your mouse |
 | Infinite Money | MvM credits pinned to 1,000,000 (MvM only) |
