@@ -10,7 +10,7 @@
 #include <vphysics>
 #define REQUIRE_EXTENSIONS
 
-#define PLUGIN_VERSION "1.2.1"
+#define PLUGIN_VERSION "1.2.2"
 #define ADMIN_FLAG ADMFLAG_CHEATS
 
 #define AIMBOT_FOV 30.0
