@@ -10,7 +10,7 @@
 #include <vphysics>
 #define REQUIRE_EXTENSIONS
 
-#define PLUGIN_VERSION "1.2.2"
+#define PLUGIN_VERSION "1.3.0"
 #define ADMIN_FLAG ADMFLAG_CHEATS
 
 #define AIMBOT_FOV 30.0
@@ -55,6 +55,9 @@ enum
     FEAT_BUILD,
     FEAT_INSTACHARGE,
     FEAT_AUTOSTRAFE,
+    FEAT_MVMCASH,
+    FEAT_CANTEEN,
+    FEAT_MAGNET,
     FEAT_COUNT
 }
 
@@ -63,7 +66,8 @@ static const char g_FeatureNames[FEAT_COUNT][16] =
     "aimbot", "infammo", "crits", "rapidfire", "killaura",
     "homing", "speed", "invis", "infhealth", "god",
     "noclip", "nofall", "oneshot", "cloak", "uber",
-    "stats", "build", "instacharge", "autostrafe"
+    "stats", "build", "instacharge", "autostrafe",
+    "mvmcash", "canteen", "cashmagnet"
 };
 
 static const char g_FeatureTitles[FEAT_COUNT][32] =
@@ -72,7 +76,8 @@ static const char g_FeatureTitles[FEAT_COUNT][32] =
     "Kill Aura", "Homing Projectiles", "Speed Hack",
     "Invisibility", "Infinite Health", "Godmode", "Noclip",
     "No Fall Damage", "One-Shot Kill", "Infinite Cloak", "Instant Uber",
-    "Hacked Stats", "Instant Lvl3 Buildings", "Instant Charge", "Auto Strafe"
+    "Hacked Stats", "Instant Lvl3 Buildings", "Instant Charge", "Auto Strafe",
+    "Infinite Money", "Infinite Canteen", "Cash Magnet"
 };
 
 bool g_Aimbot[MAXPLAYERS + 1];
@@ -101,6 +106,13 @@ int g_MenuTarget[MAXPLAYERS + 1];
 bool g_InstaCharge[MAXPLAYERS + 1];
 bool g_AutoStrafe[MAXPLAYERS + 1];
 float g_LastYaw[MAXPLAYERS + 1];
+bool g_MvmCash[MAXPLAYERS + 1];
+bool g_Canteen[MAXPLAYERS + 1];
+bool g_CashMagnet[MAXPLAYERS + 1];
+
+#define MVM_CASH_CAP 1000000
+#define MAGNET_INTERVAL 10
+int g_MagnetTick;
 StringMap g_ProjScaled;
 
 #define PROJ_TRACK_MAX 2048
@@ -145,6 +157,11 @@ public void OnPluginStart()
     RegAdminCmd("sm_thirdperson", Cmd_ThirdPerson, ADMIN_FLAG, "Force third person camera");
     RegAdminCmd("sm_hdebug", Cmd_HDebug, ADMIN_FLAG, "Toggle homing debug output");
     RegAdminCmd("sm_firstperson", Cmd_FirstPerson, ADMIN_FLAG, "Restore first person camera");
+    RegAdminCmd("sm_givecash", Cmd_GiveCash, ADMIN_FLAG, "sm_givecash <target|all> <amount> - grant MvM credits");
+    RegAdminCmd("sm_purgerobots", Cmd_PurgeRobots, ADMIN_FLAG, "Kill all BLU robot bots in MvM");
+    RegAdminCmd("sm_killtank", Cmd_KillTank, ADMIN_FLAG, "Instantly destroy the MvM tank");
+    RegAdminCmd("sm_cashrain", Cmd_CashRain, ADMIN_FLAG, "sm_cashrain <count> - spawn currency packs around you");
+    RegAdminCmd("sm_resetbomb", Cmd_ResetBomb, ADMIN_FLAG, "Return the MvM bomb to the hatch");
 
     HookEvent("player_spawn", Event_Spawn);
 
@@ -181,6 +198,9 @@ void ResetPlayer(int client)
     g_Uber[client] = false;
     g_InstaCharge[client] = false;
     g_AutoStrafe[client] = false;
+    g_MvmCash[client] = false;
+    g_Canteen[client] = false;
+    g_CashMagnet[client] = false;
     g_LastYaw[client] = 0.0;
     g_HStats[client] = false;
     g_Build[client] = false;
@@ -371,6 +391,155 @@ public Action Cmd_FirstPerson(int client, int args)
     return Plugin_Handled;
 }
 
+public Action Cmd_GiveCash(int client, int args)
+{
+    if (args < 2)
+    {
+        ReplyToCommand(client, "[Cheats] Usage: sm_givecash <target|all> <amount>");
+        return Plugin_Handled;
+    }
+
+    char targetName[64], amountStr[16];
+    GetCmdArg(1, targetName, sizeof(targetName));
+    GetCmdArg(2, amountStr, sizeof(amountStr));
+
+    int amount = StringToInt(amountStr);
+    if (amount < 0) amount = 0;
+
+    int res = GetPlayerResourceEntity();
+    if (res == -1 || !HasEntProp(res, Prop_Send, "m_nCurrency"))
+    {
+        ReplyToCommand(client, "[Cheats] Currency resource not available (are you in MvM?)");
+        return Plugin_Handled;
+    }
+
+    char target_name[MAX_TARGET_LENGTH];
+    int targets[MAXPLAYERS + 1], count;
+    bool tn_is_ml;
+
+    if ((count = ProcessTargetString(
+            targetName,
+            client,
+            targets,
+            MAXPLAYERS,
+            COMMAND_FILTER_NO_BOTS | COMMAND_FILTER_ALIVE,
+            target_name,
+            sizeof(target_name),
+            tn_is_ml)) <= 0)
+    {
+        ReplyToTargetError(client, count);
+        return Plugin_Handled;
+    }
+
+    for (int i = 0; i < count; i++)
+    {
+        SetEntProp(res, Prop_Send, "m_nCurrency", amount, _, targets[i]);
+    }
+
+    PrintToChat(client, "\x04[Cheats]\x01 Set %s cash to %d.", target_name, amount);
+    return Plugin_Handled;
+}
+
+public Action Cmd_PurgeRobots(int client, int args)
+{
+    int killed;
+    for (int i = 1; i <= MaxClients; i++)
+    {
+        if (!IsClientInGame(i) || !IsFakeClient(i) || !IsPlayerAlive(i)) continue;
+        if (GetClientTeam(i) != view_as<int>(TFTeam_Blue)) continue;
+        ForcePlayerSuicide(i);
+        killed++;
+    }
+
+    PrintToChatAll("\x04[Cheats]\x01 Admin purged %d robot(s).", killed);
+    return Plugin_Handled;
+}
+
+public Action Cmd_KillTank(int client, int args)
+{
+    int tank = MaxClients + 1;
+    int found;
+    while ((tank = FindEntityByClassname(tank, "tank_boss")) != -1)
+    {
+        SDKHooks_TakeDamage(tank, client > 0 ? client : 0, client > 0 ? client : 0, 100000.0);
+        found++;
+    }
+
+    if (found)
+    {
+        PrintToChatAll("\x04[Cheats]\x01 Admin destroyed the tank!");
+    }
+    else
+    {
+        ReplyToCommand(client, "[Cheats] No tank on the field.");
+    }
+    return Plugin_Handled;
+}
+
+public Action Cmd_CashRain(int client, int args)
+{
+    if (client == 0 || !IsClientInGame(client) || !IsPlayerAlive(client))
+    {
+        ReplyToCommand(client, "[Cheats] Must be used by a living player.");
+        return Plugin_Handled;
+    }
+
+    char arg[8];
+    GetCmdArg(1, arg, sizeof(arg));
+    int count = StringToInt(arg);
+    if (count < 1) count = 10;
+    if (count > 50) count = 50;
+
+    float origin[3];
+    GetClientAbsOrigin(client, origin);
+
+    int spawned;
+    for (int i = 0; i < count; i++)
+    {
+        int pack = CreateEntityByName("item_currencypack_small");
+        if (pack == -1) continue;
+
+        float offset[3];
+        offset[0] = origin[0] + GetRandomFloat(-120.0, 120.0);
+        offset[1] = origin[1] + GetRandomFloat(-120.0, 120.0);
+        offset[2] = origin[2] + 48.0;
+
+        if (!DispatchSpawn(pack))
+        {
+            AcceptEntityInput(pack, "Kill");
+            continue;
+        }
+
+        TeleportEntity(pack, offset, NULL_VECTOR, NULL_VECTOR);
+        spawned++;
+    }
+
+    PrintToChat(client, "\x04[Cheats]\x01 Rained %d cash pack(s).", spawned);
+    return Plugin_Handled;
+}
+
+public Action Cmd_ResetBomb(int client, int args)
+{
+    int flag = MaxClients + 1;
+    int reset;
+
+    while ((flag = FindEntityByClassname(flag, "item_teamflag")) != -1)
+    {
+        AcceptEntityInput(flag, "ForceReset");
+        reset++;
+    }
+
+    if (reset)
+    {
+        PrintToChatAll("\x04[Cheats]\x01 Bomb returned to the hatch.");
+    }
+    else
+    {
+        ReplyToCommand(client, "[Cheats] No bomb found to reset.");
+    }
+    return Plugin_Handled;
+}
+
 void ShowTargetMenu(int client)
 {
     if (client == 0 || !IsClientInGame(client))
@@ -514,6 +683,9 @@ bool GetFeatureBool(int client, int feat)
         case FEAT_BUILD: return g_Build[client];
         case FEAT_INSTACHARGE: return g_InstaCharge[client];
         case FEAT_AUTOSTRAFE: return g_AutoStrafe[client];
+        case FEAT_MVMCASH: return g_MvmCash[client];
+        case FEAT_CANTEEN: return g_Canteen[client];
+        case FEAT_MAGNET: return g_CashMagnet[client];
     }
     return false;
 }
@@ -563,6 +735,9 @@ void SetFeatureByIndex(int client, int feat, bool value)
         case FEAT_BUILD: g_Build[client] = value;
         case FEAT_INSTACHARGE: g_InstaCharge[client] = value;
         case FEAT_AUTOSTRAFE: g_AutoStrafe[client] = value;
+        case FEAT_MVMCASH: g_MvmCash[client] = value;
+        case FEAT_CANTEEN: g_Canteen[client] = value;
+        case FEAT_MAGNET: g_CashMagnet[client] = value;
     }
 }
 
@@ -677,9 +852,84 @@ public Action Timer_Master(Handle timer)
         {
             DoInstaCharge(c);
         }
+
+        if (g_MvmCash[c] || g_Canteen[c])
+        {
+            DoMvmPerks(c);
+        }
+    }
+
+    if (g_MagnetTick++ >= MAGNET_INTERVAL)
+    {
+        g_MagnetTick = 0;
+        DoCashMagnet();
     }
 
     return Plugin_Continue;
+}
+
+bool InMvm()
+{
+    static bool checked = false;
+    static int mvmOffs = -1;
+    if (!checked)
+    {
+        checked = true;
+        mvmOffs = (FindSendPropInfo("CTFGameRulesProxy", "m_bPlayingMannVsMachine") != -1) ? 1 : 0;
+    }
+    if (!mvmOffs) return false;
+    return view_as<bool>(GameRules_GetProp("m_bPlayingMannVsMachine"));
+}
+
+void DoMvmPerks(int client)
+{
+    if (!InMvm()) return;
+
+    if (g_MvmCash[client])
+    {
+        int res = GetPlayerResourceEntity();
+        if (res != -1 && HasEntProp(res, Prop_Send, "m_nCurrency"))
+        {
+            SetEntProp(res, Prop_Send, "m_nCurrency", MVM_CASH_CAP, _, client);
+        }
+    }
+
+    if (g_Canteen[client])
+    {
+        for (int i = 0; i < 4; i++)
+        {
+            SetEntPropFloat(client, Prop_Send, "m_flItemChargeMeter", 100.0, i);
+        }
+    }
+}
+
+void DoCashMagnet()
+{
+    if (!InMvm()) return;
+
+    float pos[MAXPLAYERS + 1][3];
+    int count;
+    int targets[MAXPLAYERS + 1];
+
+    for (int c = 1; c <= MaxClients; c++)
+    {
+        if (IsClientInGame(c) && IsPlayerAlive(c) && g_CashMagnet[c])
+        {
+            GetClientAbsOrigin(c, pos[c]);
+            targets[count++] = c;
+        }
+    }
+
+    if (!count) return;
+
+    int magnetIdx;
+    int ent = -1;
+    while ((ent = FindEntityByClassname(ent, "item_currencypack*")) != -1)
+    {
+        int owner = targets[magnetIdx % count];
+        magnetIdx++;
+        TeleportEntity(ent, pos[owner], NULL_VECTOR, NULL_VECTOR);
+    }
 }
 
 void DoInstaCharge(int client)

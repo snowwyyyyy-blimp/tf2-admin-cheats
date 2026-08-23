@@ -27,6 +27,10 @@ console command, so you can give one player homing rockets without touching anyo
 | Hacked Stats | 5x outgoing damage, 1.75x projectile speed |
 | Instant Lvl3 Buildings | Engineer buildings spawn as maxed sentries (lvl3 model/stats) |
 | Instant Charge | Demo shield meter, sniper charge, medigun uber, and Huntsman draw all fill instantly |
+| Auto Strafe | Perfect air-strafing while airborne - just move your mouse |
+| Infinite Money | MvM credits pinned to 1,000,000 (MvM only) |
+| Infinite Canteen | Canteen charge meters never drain (MvM only) |
+| Cash Magnet | Every dropped cash pack on the map teleports straight to you, unlimited range (MvM only) |
 
 ## Commands
 
@@ -39,6 +43,11 @@ sm_respawnme                            Instant respawn
 sm_thirdperson                          Force third person camera
 sm_firstperson                          Restore first person camera
 sm_hdebug                               Toggle verbose homing debug output
+sm_givecash <target|all> <amount>       Grant MvM credits to players
+sm_purgerobots                          Kill every robot bot on the field
+sm_killtank                             Instantly destroy the tank
+sm_cashrain <count>                     Spawn up to 50 cash packs around you
+sm_resetbomb                            Send the bomb back to the hatch
 ```
 
 `feature` accepts the short name shown by the menu, e.g.:
