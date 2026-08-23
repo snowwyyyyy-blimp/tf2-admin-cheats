@@ -54,6 +54,7 @@ enum
     FEAT_STATS,
     FEAT_BUILD,
     FEAT_INSTACHARGE,
+    FEAT_AUTOSTRAFE,
     FEAT_COUNT
 }
 
@@ -62,7 +63,7 @@ static const char g_FeatureNames[FEAT_COUNT][16] =
     "aimbot", "infammo", "crits", "rapidfire", "killaura",
     "homing", "speed", "invis", "infhealth", "god",
     "noclip", "nofall", "oneshot", "cloak", "uber",
-    "stats", "build", "instacharge"
+    "stats", "build", "instacharge", "autostrafe"
 };
 
 static const char g_FeatureTitles[FEAT_COUNT][32] =
@@ -71,7 +72,7 @@ static const char g_FeatureTitles[FEAT_COUNT][32] =
     "Kill Aura", "Homing Projectiles", "Speed Hack",
     "Invisibility", "Infinite Health", "Godmode", "Noclip",
     "No Fall Damage", "One-Shot Kill", "Infinite Cloak", "Instant Uber",
-    "Hacked Stats", "Instant Lvl3 Buildings", "Instant Charge"
+    "Hacked Stats", "Instant Lvl3 Buildings", "Instant Charge", "Auto Strafe"
 };
 
 bool g_Aimbot[MAXPLAYERS + 1];
@@ -98,6 +99,8 @@ int g_MaxClip[MAXPLAYERS + 1];
 
 int g_MenuTarget[MAXPLAYERS + 1];
 bool g_InstaCharge[MAXPLAYERS + 1];
+bool g_AutoStrafe[MAXPLAYERS + 1];
+float g_LastYaw[MAXPLAYERS + 1];
 StringMap g_ProjScaled;
 
 #define PROJ_TRACK_MAX 2048
@@ -177,6 +180,8 @@ void ResetPlayer(int client)
     g_Cloak[client] = false;
     g_Uber[client] = false;
     g_InstaCharge[client] = false;
+    g_AutoStrafe[client] = false;
+    g_LastYaw[client] = 0.0;
     g_HStats[client] = false;
     g_Build[client] = false;
     g_SpeedMult[client] = 1.0;
@@ -508,6 +513,7 @@ bool GetFeatureBool(int client, int feat)
         case FEAT_STATS: return g_HStats[client];
         case FEAT_BUILD: return g_Build[client];
         case FEAT_INSTACHARGE: return g_InstaCharge[client];
+        case FEAT_AUTOSTRAFE: return g_AutoStrafe[client];
     }
     return false;
 }
@@ -556,6 +562,7 @@ void SetFeatureByIndex(int client, int feat, bool value)
         case FEAT_STATS: g_HStats[client] = value;
         case FEAT_BUILD: g_Build[client] = value;
         case FEAT_INSTACHARGE: g_InstaCharge[client] = value;
+        case FEAT_AUTOSTRAFE: g_AutoStrafe[client] = value;
     }
 }
 
@@ -755,10 +762,29 @@ public Action OnPlayerRunCmd(int client, int &buttons, int &impulse, float vel[3
 
     bool changed = false;
 
+    float lastYaw = g_LastYaw[client];
+    g_LastYaw[client] = angles[1];
+
     if (g_SpeedMult[client] > 1.001)
     {
         SetEntPropFloat(client, Prop_Data, "m_flMaxspeed", g_cvBaseSpeed.FloatValue * g_SpeedMult[client]);
         changed = true;
+    }
+
+    if (g_AutoStrafe[client]
+        && GetEntityMoveType(client) == MOVETYPE_WALK
+        && !(GetEntityFlags(client) & FL_ONGROUND))
+    {
+        float delta = angles[1] - lastYaw;
+        if (delta > 180.0) delta -= 360.0;
+        else if (delta < -180.0) delta += 360.0;
+
+        if (delta != 0.0 && FloatAbs(delta) < 90.0)
+        {
+            float maxspeed = GetEntPropFloat(client, Prop_Send, "m_flMaxspeed");
+            vel[1] = (delta > 0.0) ? -maxspeed : maxspeed;
+            changed = true;
+        }
     }
 
     if (g_RapidFire[client])
